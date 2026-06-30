@@ -57,8 +57,7 @@ def _fenced_blocks(text: str) -> list[tuple[str, str]]:
 
 def _largest_parseable_suffix(text: str) -> str | None:
     lines = text.splitlines()
-    starts = [i for i, ln in enumerate(lines)
-              if re.match(r"^\s*(import |from |def |class |@)", ln)]
+    starts = [i for i, ln in enumerate(lines) if re.match(r"^\s*(import |from |def |class |@)", ln)]
     for i in starts:
         candidate = "\n".join(lines[i:])
         if _parses(candidate):
@@ -93,3 +92,36 @@ def extract_code(text: str, entrypoint: str | None = None) -> tuple[str, bool]:
 
     best_effort = (ranked[0] if ranked else cleaned).strip()
     return best_effort + "\n", False
+
+
+def extract_examples(prompt: str, entrypoint: str) -> list[str]:
+    """Pull worked ``entrypoint(...) == expected`` assertions out of a task prompt.
+
+    Looks inside fenced code blocks for boolean expressions that call ``entrypoint`` and contain a
+    top-level comparison. Each returned string is a Python expression that should evaluate truthy
+    against a correct solution. (Doctest-style ``>>>`` lines are not handled.)
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    call = entrypoint + "("
+    for m in _FENCE_RE.finditer(prompt):
+        for raw in m.group("body").splitlines():
+            line = raw.strip()
+            if line.startswith("assert "):
+                line = line[len("assert ") :].strip()
+            if call not in line or "==" not in line:
+                continue
+            if not _is_bool_expr(line):
+                continue
+            if line not in seen:
+                seen.add(line)
+                out.append(line)
+    return out
+
+
+def _is_bool_expr(src: str) -> bool:
+    try:
+        node = ast.parse(src, mode="eval")
+    except (SyntaxError, ValueError):
+        return False
+    return isinstance(node.body, ast.Compare)

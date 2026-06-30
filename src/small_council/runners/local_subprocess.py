@@ -19,7 +19,7 @@ from pathlib import Path
 from small_council.models import ExampleReport, ExampleResult
 
 # stdlib-only; loads the candidate, evaluates each boolean expr, writes result.json as the channel.
-_CHECK_DRIVER = '''
+_CHECK_DRIVER = """
 import json, sys
 ns = {}
 try:
@@ -37,7 +37,7 @@ for expr in spec["asserts"]:
     except Exception as e:
         results.append({"expr": expr, "ok": False, "error": repr(e)})
 json.dump({"loaded": True, "results": results}, open("result.json", "w"))
-'''
+"""
 
 
 def _preexec(cpu_time_s: int, mem_limit_mb: int | None):

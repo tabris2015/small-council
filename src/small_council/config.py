@@ -21,6 +21,9 @@ class CouncilConfig(BaseModel):
     example_timeout_s: float = 10.0
     example_mem_limit_mb: int | None = 1024
 
+    temperature: float = 0.0
+    max_tokens: int = 2048
+
     # For standalone use against an OpenAI-compatible endpoint. The bench integration injects its
     # own model layer and ignores these.
     base_url: str | None = None

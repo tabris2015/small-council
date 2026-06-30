@@ -11,6 +11,19 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class CouncilTask(BaseModel):
+    """One coding task for the council.
+
+    ``examples`` are worked ``entrypoint(...) == expected`` assertions the verifier may run in a
+    sandbox; if ``None`` they are extracted from the prompt's fenced code blocks.
+    """
+
+    prompt: str
+    entrypoint: str
+    signature: str | None = None
+    examples: list[str] | None = None
+
+
 class Plan(BaseModel):
     """The planner's output: a short implementation plan, no code."""
 
