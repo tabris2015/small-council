@@ -34,6 +34,23 @@ Early scaffold. The stable core is in place — typed I/O contracts (`models.py`
 `CodeRunner` port, a self-contained sandbox runner, and a code extractor. The agent roles,
 orchestrator, and CLI land next.
 
+## Evaluation
+
+small-council is measured by the companion harness
+[`slm-coding-bench`](https://github.com/tabris2015/slm-coding-bench). The adapter in
+`small_council/integrations/slm_bench.py` implements the bench's `Solver` interface and routes every
+model call through the bench's deployment, so the council's pass@1 / parity / perf and serving
+metrics are recorded just like the built-in solvers. From a `slm-coding-bench` checkout with
+small-council importable in its environment (e.g. `uv pip install -e ../small-council`):
+
+```bash
+uv run slm-bench run -c configs/m4-agent-system.yaml --run-id council
+uv run slm-bench report baseline naive-multi council   # merged A/B comparison table
+```
+
+(The adapter is the only module that imports `slm-coding-bench`; the rest of the package has no
+benchmark dependency.)
+
 ## Development
 
 ```bash
