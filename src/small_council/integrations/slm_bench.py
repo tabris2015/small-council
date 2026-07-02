@@ -15,8 +15,12 @@ Loaded by the bench via an ``import_path`` solver spec, e.g. in a run config::
 
 from __future__ import annotations
 
+import time
+
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models import Model
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 from slm_coding_bench.deployments.base import DeploymentAdapter
 from slm_coding_bench.models import Candidate, GenMetrics, Task
@@ -24,6 +28,7 @@ from slm_coding_bench.solvers.base import Solver, SolverContext
 
 from small_council.models import CouncilTask
 from small_council.orchestrator import Council
+from small_council.tool_agent import run_tool_agent_native, run_tool_agent_prompted
 
 
 class _DeploymentChatModel(Model):
@@ -90,9 +95,7 @@ def _to_chat_messages(messages: list[ModelMessage]) -> list[dict]:
                 elif pk == "retry-prompt":
                     out.append({"role": "user", "content": _retry_text(part)})
         elif isinstance(msg, ModelResponse):
-            text = "".join(
-                p.content for p in msg.parts if getattr(p, "part_kind", "") == "text"
-            )
+            text = "".join(p.content for p in msg.parts if getattr(p, "part_kind", "") == "text")
             if text:
                 out.append({"role": "assistant", "content": text})
     return out
@@ -198,3 +201,79 @@ def _combine(calls: list[GenMetrics]) -> GenMetrics | None:
         total_ms=total_ms or None,
         tok_per_s=tps,
     )
+
+
+class ToolAgentSolver(Solver):
+    """A single tool-calling coder (model-driven ``run_python`` self-debug loop).
+
+    Native tool-calling needs the model endpoint to accept OpenAI ``tools`` and return tool_calls,
+    which the bench's ``deployment.chat()`` does not carry — so this points Pydantic-AI straight at
+    ``base_url`` (an ``mlx_lm.server`` with the model's tool-call template). ``mode`` selects
+    structured native tools vs the prompted (unstructured) baseline for the ablation.
+    """
+
+    name = "tool_agent"
+    per_model = False
+
+    def __init__(
+        self,
+        *,
+        coder_model: str | None = None,
+        base_url: str | None = None,
+        api_key: str = "not-needed",
+        mode: str = "native",
+        max_calls: int = 6,
+    ) -> None:
+        self.coder_model = coder_model
+        self.base_url = base_url
+        self.api_key = api_key or "not-needed"
+        self.mode = mode
+        self.max_calls = max_calls
+
+    def roster_label(self, deployment_models: list[str]) -> str:
+        m = self.coder_model or (deployment_models[0] if deployment_models else "?")
+        short = m.rsplit("/", 1)[-1].replace("-Instruct", "").replace("-4bit", "")
+        return f"tool[{short}:{self.mode}]"
+
+    def solve(
+        self, task: Task, *, model: str, deployment: DeploymentAdapter, ctx: SolverContext
+    ) -> Candidate:
+        model_id = self.coder_model or model
+        base_url = self.base_url or getattr(deployment, "base_url", None)
+        pai_model = OpenAIChatModel(
+            model_id, provider=OpenAIProvider(base_url=base_url, api_key=self.api_key)
+        )
+        ctask = CouncilTask(
+            prompt=task.prompt,
+            entrypoint=task.manifest.entrypoint,
+            signature=task.manifest.signature,
+        )
+        runner = run_tool_agent_native if self.mode == "native" else run_tool_agent_prompted
+        started = time.time()
+        result, _stats = runner(
+            ctask,
+            model=pai_model,
+            max_calls=self.max_calls,
+            temperature=ctx.temperature,
+            max_tokens=ctx.max_tokens,
+        )
+        wall_ms = (time.time() - started) * 1000.0
+        u = result.usage
+        tps = (
+            (u.completion_tokens / (wall_ms / 1000.0)) if u.completion_tokens and wall_ms else None
+        )
+        gm = GenMetrics(
+            prompt_tokens=u.prompt_tokens or None,
+            completion_tokens=u.completion_tokens or None,
+            ttft_ms=None,
+            total_ms=wall_ms,
+            tok_per_s=tps,
+        )
+        return Candidate(
+            code=result.code,
+            raw_output=result.raw_output,
+            extraction_ok=result.extraction_ok,
+            sample_index=ctx.sample_index,
+            finish_reason=None,
+            gen_metrics=gm,
+        )

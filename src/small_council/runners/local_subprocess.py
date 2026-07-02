@@ -64,6 +64,37 @@ def _preexec(cpu_time_s: int, mem_limit_mb: int | None):
     return _set
 
 
+def run_snippet(code: str, timeout_s: float = 10.0, mem_limit_mb: int | None = 1024) -> dict:
+    """Execute a standalone Python snippet in the sandbox; capture stdout/stderr.
+
+    Used by the ``run_python`` tool so a tool-calling agent can execute and self-test its own code.
+    Returns ``{ok, stdout, stderr, timed_out}`` with output truncated to keep tool results small.
+    """
+    with tempfile.TemporaryDirectory(prefix="council-tool-") as d:
+        tmp = Path(d)
+        (tmp / "snippet.py").write_text(code)
+        env = {"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8", "PYTHONPATH": ""}
+        cpu = max(1, int(timeout_s) + 1)
+        try:
+            proc = subprocess.run(
+                [sys.executable, "snippet.py"],
+                cwd=tmp,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                preexec_fn=_preexec(cpu, mem_limit_mb),
+            )
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "stdout": "", "stderr": "timed out", "timed_out": True}
+        return {
+            "ok": proc.returncode == 0,
+            "stdout": proc.stdout[-2000:],
+            "stderr": proc.stderr[-2000:],
+            "timed_out": False,
+        }
+
+
 class LocalCodeRunner:
     """Default :class:`~small_council.ports.CodeRunner` backed by a subprocess sandbox."""
 
